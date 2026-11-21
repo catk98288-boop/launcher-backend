@@ -4,7 +4,7 @@ app.use(express.json());
 
 // ค่าเริ่มต้น (เปลี่ยน PlaceId เป็นของคุณเอง)
 let currentServer = {
-    placeId: "10777044958", // <-- เปลี่ยนเป็น PlaceId ของแมพคุณ
+    placeId: "91719580047904", // <-- เปลี่ยนเป็น PlaceId ของแมพคุณ
     jobId: "2433ddc9-f24f-4906-9d42-f3c54a86cdbe"              // ค่านี้จะถูกอัปเดตจากเกม Roblox อัตโนมัติ
 };
 
