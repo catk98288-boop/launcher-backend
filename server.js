@@ -5,7 +5,7 @@ app.use(express.json());
 // ค่าเริ่มต้น (เปลี่ยน PlaceId เป็นของคุณเอง)
 let currentServer = {
     placeId: "10777044958", // <-- เปลี่ยนเป็น PlaceId ของแมพคุณ
-    jobId: ""              // ค่านี้จะถูกอัปเดตจากเกม Roblox อัตโนมัติ
+    jobId: "2433ddc9-f24f-4906-9d42-f3c54a86cdbe"              // ค่านี้จะถูกอัปเดตจากเกม Roblox อัตโนมัติ
 };
 
 // 1. Endpoint สำหรับให้เกม Roblox ส่ง JobId เข้ามาอัปเดต
