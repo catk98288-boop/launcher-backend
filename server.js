@@ -2,199 +2,169 @@
 const express = require("express");
 
 const app = express();
-const PORT = Number(process.env.PORT || 3000);
+const PORT = process.env.PORT || 3000;
 
-const PLACE_ID = String(
-    process.env.PLACE_ID || "91719580047904"
-).trim();
+const PLACE_ID = "91719580047904";
 
-const JOB_ID = String(
-    process.env.JOB_ID || "2433ddc9-f24f-4906-9d42-f3c54a86cdbe"
-).trim();
-
-app.disable("x-powered-by");
 app.use(express.json());
 
-const isValidPlaceId = value =>
-    /^\d{1,20}$/.test(String(value || ""));
+async function robloxFetch(url) {
+    const response = await fetch(url, {
+        headers: {
+            "User-Agent": "RobloxLauncher/1.0"
+        },
+        signal: AbortSignal.timeout(15000)
+    });
 
-const cleanString = (value, fallback, maxLength) =>
-    typeof value === "string" && value.trim()
-        ? value.trim().slice(0, maxLength)
-        : fallback;
-
-
-async function fetchJson(url, timeoutMs = 12000) {
-
-    const controller = new AbortController();
-
-    const timer = setTimeout(
-        () => controller.abort(),
-        timeoutMs
-    );
-
-    try {
-
-        const response = await fetch(url, {
-            signal: controller.signal,
-            headers: {
-                "Accept": "application/json",
-                "User-Agent": "RobloxLauncherBackend/3.0"
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error(
-                `Roblox API returned HTTP ${response.status}`
-            );
-        }
-
-        return await response.json();
-
-    } finally {
-        clearTimeout(timer);
+    if (!response.ok) {
+        throw new Error(`Roblox API error: HTTP ${response.status}`);
     }
+
+    return response.json();
 }
 
-
-async function getGameInformation(placeId) {
-
-    const detailsURL =
-        `https://games.roblox.com/v1/games/multiget-place-details?placeIds=${encodeURIComponent(placeId)}`;
-
-    const imageURL =
-        `https://thumbnails.roblox.com/v1/places/gameicons?placeIds=${encodeURIComponent(placeId)}&size=512x512&format=Png&isCircular=false`;
-
-    const [detailsResult, imageResult] =
-        await Promise.allSettled([
-            fetchJson(detailsURL),
-            fetchJson(imageURL)
-        ]);
-
-    let gameName = "Roblox Experience";
-    let description = "Explore and enjoy this Roblox experience.";
-    let gameImage = "";
-
-    if (detailsResult.status === "fulfilled") {
-
-        const details = detailsResult.value;
-
-        const game = Array.isArray(details)
-            ? details[0]
-            : null;
-
-        if (game) {
-
-            gameName = cleanString(
-                game.name,
-                gameName,
-                150
-            );
-
-            description = cleanString(
-                game.description,
-                description,
-                2000
-            );
-        }
-
-    } else {
-
-        console.error(
-            "Game details request failed:",
-            detailsResult.reason
-        );
-    }
-
-    if (imageResult.status === "fulfilled") {
-
-        const images = imageResult.value;
-
-        if (
-            Array.isArray(images.data) &&
-            images.data.length > 0
-        ) {
-
-            gameImage = cleanString(
-                images.data[0].imageUrl,
-                "",
-                2048
-            );
-        }
-
-    } else {
-
-        console.error(
-            "Game icon request failed:",
-            imageResult.reason
-        );
-    }
-
-    return {
-        gameName,
-        description,
-        gameImage
-    };
-}
-
-
-app.get("/api/server", async (_req, res) => {
-
-    res.setHeader(
-        "Cache-Control",
-        "no-store, no-cache, must-revalidate"
-    );
-
-    res.setHeader("Pragma", "no-cache");
-
-    if (!isValidPlaceId(PLACE_ID)) {
-
-        return res.status(503).json({
-            success: false,
-            message: "Invalid PLACE_ID environment variable."
-        });
-    }
-
-    try {
-
-        const game = await getGameInformation(PLACE_ID);
-
-        return res.json({
-            success: true,
-            placeId: PLACE_ID,
-            jobId: JOB_ID,
-            gameName: game.gameName,
-            description: game.description,
-            gameImage: game.gameImage,
-            metadataLoaded: game.gameName !== "Roblox Experience",
-            updatedAt: new Date().toISOString()
-        });
-
-    } catch (error) {
-
-        console.error("Game information error:", error);
-
-        return res.status(502).json({
-            success: false,
-            message: "Unable to retrieve game information from Roblox."
-        });
-    }
-});
-
-
-app.get("/", (_req, res) => {
-
+// Health check
+app.get("/", (req, res) => {
     res.json({
-        name: "Roblox Launcher API",
-        status: "online",
-        endpoint: "/api/server"
+        success: true,
+        service: "Roblox Launcher Backend",
+        placeId: PLACE_ID
     });
 });
 
+// Game information
+app.get("/api/server", async (req, res) => {
+    try {
+        // Resolve Place ID -> Universe ID
+        const universeInfo = await robloxFetch(
+            `https://apis.roblox.com/universes/v1/places/${PLACE_ID}/universe`
+        );
+
+        const universeId = universeInfo.universeId;
+
+        if (!universeId) {
+            throw new Error("Cannot resolve Universe ID");
+        }
+
+        const gameInfo = await robloxFetch(
+            `https://games.roblox.com/v1/games?universeIds=${universeId}`
+        );
+
+        const game = gameInfo.data?.[0];
+
+        if (!game) {
+            throw new Error("Game information not found");
+        }
+
+        let gameImage = "";
+
+        try {
+            const thumbnail = await robloxFetch(
+                `https://thumbnails.roblox.com/v1/places/gameicons?placeIds=${PLACE_ID}&size=512x512&format=Png&isCircular=false`
+            );
+
+            gameImage = thumbnail.data?.[0]?.imageUrl || "";
+        } catch (error) {
+            console.warn("Thumbnail unavailable:", error.message);
+        }
+
+        res.json({
+            success: true,
+            placeId: PLACE_ID,
+            universeId,
+            gameName: game.name || "Unknown Experience",
+            description: game.description || "",
+            gameImage,
+            playing: game.playing ?? 0,
+            visits: game.visits ?? 0,
+            maxPlayers: game.maxPlayers ?? 0
+        });
+
+    } catch (error) {
+        console.error("Game information error:", error.message);
+
+        res.status(502).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+// Get public servers
+app.get("/api/servers", async (req, res) => {
+    try {
+        const requestedPlaceId = String(
+            req.query.placeId || PLACE_ID
+        );
+
+        if (requestedPlaceId !== PLACE_ID) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid Place ID"
+            });
+        }
+
+        const limit = Math.min(
+            Math.max(parseInt(req.query.limit || "100", 10), 1),
+            100
+        );
+
+        const cursor = req.query.cursor
+            ? String(req.query.cursor)
+            : "";
+
+        const params = new URLSearchParams({
+            sortOrder: "1",
+            limit: String(limit),
+            excludeFullGames: "true"
+        });
+
+        if (cursor) {
+            params.set("cursor", cursor);
+        }
+
+        const url =
+            `https://games.roblox.com/v1/games/${PLACE_ID}/servers/Public?` +
+            params.toString();
+
+        const result = await robloxFetch(url);
+
+        const servers = (result.data || [])
+            .filter(server => {
+                return (
+                    typeof server.id === "string" &&
+                    server.id.length > 0 &&
+                    Number.isFinite(server.playing) &&
+                    Number.isFinite(server.maxPlayers) &&
+                    server.playing < server.maxPlayers
+                );
+            })
+            .map(server => ({
+                jobId: server.id,
+                playing: server.playing,
+                maxPlayers: server.maxPlayers,
+                fps: server.fps ?? null,
+                ping: server.ping ?? null
+            }));
+
+        res.json({
+            success: true,
+            placeId: PLACE_ID,
+            servers,
+            nextPageCursor: result.nextPageCursor || null
+        });
+
+    } catch (error) {
+        console.error("Public server error:", error.message);
+
+        res.status(502).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
 
 app.listen(PORT, "0.0.0.0", () => {
-
-    console.log(
-        `Roblox Launcher API listening on port ${PORT}`
-    );
+    console.log(`Roblox Backend running on port ${PORT}`);
+    console.log(`Place ID: ${PLACE_ID}`);
 });
